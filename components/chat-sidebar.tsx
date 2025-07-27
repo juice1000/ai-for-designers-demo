@@ -2,14 +2,21 @@
 
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
-import { X, Copy, RefreshCw, MessageSquare } from "lucide-react"
+import { Input } from "@/components/ui/input"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import { Badge } from "@/components/ui/badge"
+import { Separator } from "@/components/ui/separator"
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { Search, MessageSquare, Mic, Trash2, Clock } from "lucide-react"
 import { cn } from "@/lib/utils"
 
-interface ChatMessage {
-  id: string
-  request: string
+interface Chat {
+  id: number
+  message: string
   response: string
   created_at: string
+  source?: string
+  conversation_id?: string
 }
 
 interface ChatSidebarProps {
@@ -17,254 +24,225 @@ interface ChatSidebarProps {
   onClose: () => void
   prompt: string
   onRegenerate: () => void
+  onVoiceConversationUpdate?: (userMessage: string, agentResponse: string) => void
 }
 
-export function ChatSidebar({ isOpen, onClose, prompt, onRegenerate }: ChatSidebarProps) {
-  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([])
-  const [currentResponse, setCurrentResponse] = useState("")
+export function ChatSidebar({ isOpen, onClose, prompt, onRegenerate, onVoiceConversationUpdate }: ChatSidebarProps) {
+  const [chats, setChats] = useState<Chat[]>([])
+  const [filteredChats, setFilteredChats] = useState<Chat[]>([])
+  const [searchQuery, setSearchQuery] = useState("")
   const [isLoading, setIsLoading] = useState(false)
-  const [animatedText, setAnimatedText] = useState("")
-  const [isLoadingHistory, setIsLoadingHistory] = useState(false)
+  const [selectedFilter, setSelectedFilter] = useState<"all" | "text" | "voice">("all")
 
-  // Fetch chat history from Supabase
-  const fetchChatHistory = async () => {
-    setIsLoadingHistory(true)
-    try {
-      const res = await fetch("/api/chat-history", {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-        },
-      })
-
-      const data = await res.json()
-
-      if (!res.ok) {
-        console.error("API response error:", data.error)
-        // Still try to use any chats that might be returned
-        setChatHistory(data.chats || [])
-        return
-      }
-
-      console.log("Chat history fetched successfully:", data.chats?.length || 0, "messages")
-      setChatHistory(data.chats || [])
-    } catch (error) {
-      console.error("Error fetching chat history:", error)
-      // Set empty array on error so UI doesn't break
-      setChatHistory([])
-    } finally {
-      setIsLoadingHistory(false)
-    }
-  }
-
-  // Generate new content
-  const generateContent = async () => {
-    if (!prompt.trim()) return
-
+  // Fetch chat history
+  const fetchChats = async () => {
     setIsLoading(true)
-    setCurrentResponse("")
-    setAnimatedText("")
-
     try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ message: prompt }),
-      })
-
-      if (!res.ok) {
-        throw new Error("Failed to generate content")
+      const response = await fetch("/api/chat-history")
+      if (response.ok) {
+        const data = await response.json()
+        setChats(data.chats || [])
       }
-
-      const data = await res.json()
-      setCurrentResponse(data.message)
-
-      // Refresh chat history to include the new message
-      await fetchChatHistory()
     } catch (error) {
-      console.error("Error:", error)
-      setCurrentResponse("Sorry, there was an error generating your content. Please try again.")
+      console.error("Failed to fetch chat history:", error)
     } finally {
       setIsLoading(false)
     }
   }
 
-  // Animate text typing effect for current response
+  // Filter chats based on search query and filter type
   useEffect(() => {
-    if (currentResponse && !isLoading) {
-      setAnimatedText("")
-      let index = 0
-      const timer = setInterval(() => {
-        if (index < currentResponse.length) {
-          setAnimatedText(currentResponse.slice(0, index + 1))
-          index++
-        } else {
-          clearInterval(timer)
-        }
-      }, 20)
+    let filtered = chats
 
-      return () => clearInterval(timer)
+    // Filter by type
+    if (selectedFilter === "text") {
+      filtered = filtered.filter((chat) => !chat.source || chat.source === "text_input" || chat.source === "text_chat")
+    } else if (selectedFilter === "voice") {
+      filtered = filtered.filter((chat) => chat.source === "voice" || chat.source === "voice_conversation")
     }
-  }, [currentResponse, isLoading])
 
-  // Fetch chat history when sidebar opens
+    // Filter by search query
+    if (searchQuery) {
+      filtered = filtered.filter(
+        (chat) =>
+          chat.message.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          chat.response.toLowerCase().includes(searchQuery.toLowerCase()),
+      )
+    }
+
+    setFilteredChats(filtered)
+  }, [chats, searchQuery, selectedFilter])
+
+  // Fetch chats when sidebar opens
   useEffect(() => {
     if (isOpen) {
-      fetchChatHistory()
+      fetchChats()
     }
   }, [isOpen])
 
-  // Generate new content only when regenerate is called
-  const handleRegenerate = () => {
-    generateContent()
+  // Delete a chat
+  const deleteChat = async (chatId: number) => {
+    try {
+      const response = await fetch(`/api/chat-history?id=${chatId}`, {
+        method: "DELETE",
+      })
+      if (response.ok) {
+        setChats(chats.filter((chat) => chat.id !== chatId))
+      }
+    } catch (error) {
+      console.error("Failed to delete chat:", error)
+    }
   }
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text)
+  // Format date
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString)
+    const now = new Date()
+    const diffInHours = (now.getTime() - date.getTime()) / (1000 * 60 * 60)
+
+    if (diffInHours < 24) {
+      return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    } else if (diffInHours < 168) {
+      return date.toLocaleDateString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })
+    } else {
+      return date.toLocaleDateString([], { month: "short", day: "numeric" })
+    }
+  }
+
+  // Get source icon and label
+  const getSourceInfo = (source?: string) => {
+    if (source === "voice" || source === "voice_conversation") {
+      return { icon: Mic, label: "Voice", color: "bg-blue-100 text-blue-700" }
+    }
+    return { icon: MessageSquare, label: "Text", color: "bg-gray-100 text-gray-700" }
   }
 
   return (
-    <div
-      className={cn(
-        "fixed inset-y-0 right-0 w-96 bg-white shadow-2xl transform transition-transform duration-300 ease-in-out z-50",
-        isOpen ? "translate-x-0" : "translate-x-full",
-      )}
-    >
-      <div className="flex flex-col h-full">
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-gray-200">
-          <h2 className="text-lg font-semibold text-[#06040a]">Chat History</h2>
-          <Button variant="ghost" size="icon" onClick={onClose} className="h-8 w-8">
-            <X className="h-4 w-4" />
-          </Button>
+    <Sheet open={isOpen} onOpenChange={onClose}>
+      <SheetContent side="left" className="w-[400px] sm:w-[540px] p-0">
+        <SheetHeader className="p-6 pb-4">
+          <SheetTitle className="flex items-center space-x-2">
+            <MessageSquare className="h-5 w-5" />
+            <span>Chat History</span>
+          </SheetTitle>
+        </SheetHeader>
+
+        <div className="px-6 pb-4">
+          {/* Search */}
+          <div className="relative mb-4">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <Input
+              placeholder="Search conversations..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-10"
+            />
+          </div>
+
+          {/* Filters */}
+          <div className="flex space-x-2 mb-4">
+            <Button
+              onClick={() => setSelectedFilter("all")}
+              variant={selectedFilter === "all" ? "default" : "outline"}
+              size="sm"
+              className="text-xs"
+            >
+              All
+            </Button>
+            <Button
+              onClick={() => setSelectedFilter("text")}
+              variant={selectedFilter === "text" ? "default" : "outline"}
+              size="sm"
+              className="text-xs"
+            >
+              <MessageSquare className="h-3 w-3 mr-1" />
+              Text
+            </Button>
+            <Button
+              onClick={() => setSelectedFilter("voice")}
+              variant={selectedFilter === "voice" ? "default" : "outline"}
+              size="sm"
+              className="text-xs"
+            >
+              <Mic className="h-3 w-3 mr-1" />
+              Voice
+            </Button>
+          </div>
         </div>
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {isLoadingHistory ? (
+        <Separator />
+
+        {/* Chat List */}
+        <ScrollArea className="flex-1 px-6">
+          {isLoading ? (
             <div className="flex items-center justify-center py-8">
-              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-[#06040a]"></div>
-              <span className="ml-2 text-sm text-gray-600">Loading chat history...</span>
+              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-900"></div>
             </div>
-          ) : chatHistory.length === 0 ? (
-            <div className="text-center py-8">
-              <MessageSquare className="h-12 w-12 text-gray-300 mx-auto mb-4" />
-              <p className="text-gray-500">No chat history yet</p>
-              <p className="text-sm text-gray-400 mt-1">Start a conversation to see your messages here</p>
-              <Button onClick={fetchChatHistory} variant="outline" size="sm" className="mt-4 bg-transparent">
-                <RefreshCw className="h-4 w-4 mr-2" />
-                Refresh
-              </Button>
+          ) : filteredChats.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">
+              {searchQuery ? "No conversations found" : "No chat history yet"}
             </div>
           ) : (
-            <>
-              {/* Chat History */}
-              {chatHistory.map((chat) => (
-                <div key={chat.id} className="space-y-3 pb-4 border-b border-gray-100 last:border-b-0">
-                  {/* User Message */}
-                  <div className="bg-gray-50 rounded-lg p-3">
-                    <p className="text-sm text-gray-600 mb-1">You asked:</p>
-                    <p className="text-[#06040a]">{chat.request}</p>
-                  </div>
-
-                  {/* AI Response */}
-                  <div className="bg-blue-50 rounded-lg p-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <p className="text-sm text-blue-600 font-medium">AI Response:</p>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => copyToClipboard(chat.response)}
-                        className="h-7 px-2"
-                      >
-                        <Copy className="h-3 w-3" />
-                      </Button>
-                    </div>
-                    <div className="text-[#06040a] whitespace-pre-wrap text-sm">{chat.response}</div>
-                    <p className="text-xs text-gray-400 mt-2">{new Date(chat.created_at).toLocaleString()}</p>
-                  </div>
-                </div>
-              ))}
-
-              {/* Current Response (if generating) */}
-              {(isLoading || currentResponse) && (
-                <div className="space-y-3 pb-4 border-b border-gray-100">
-                  {/* Current User Prompt */}
-                  <div className="bg-gray-50 rounded-lg p-3">
-                    <p className="text-sm text-gray-600 mb-1">You asked:</p>
-                    <p className="text-[#06040a]">{prompt}</p>
-                  </div>
-
-                  {/* Current AI Response */}
-                  <div className="bg-blue-50 rounded-lg p-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <p className="text-sm text-blue-600 font-medium">AI Response:</p>
-                      <div className="flex gap-2">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={handleRegenerate}
-                          disabled={isLoading}
-                          className="h-7 px-2"
-                        >
-                          <RefreshCw className={cn("h-3 w-3", isLoading && "animate-spin")} />
-                        </Button>
-                        {currentResponse && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => copyToClipboard(currentResponse)}
-                            className="h-7 px-2"
-                          >
-                            <Copy className="h-3 w-3" />
-                          </Button>
+            <div className="space-y-4 py-4">
+              {filteredChats.map((chat) => {
+                const sourceInfo = getSourceInfo(chat.source)
+                return (
+                  <div
+                    key={chat.id}
+                    className="border rounded-lg p-4 hover:bg-gray-50 transition-colors cursor-pointer group"
+                  >
+                    <div className="flex items-start justify-between mb-2">
+                      <div className="flex items-center space-x-2">
+                        <Badge variant="secondary" className={cn("text-xs", sourceInfo.color)}>
+                          <sourceInfo.icon className="h-3 w-3 mr-1" />
+                          {sourceInfo.label}
+                        </Badge>
+                        {chat.conversation_id && (
+                          <Badge variant="outline" className="text-xs">
+                            Session
+                          </Badge>
                         )}
                       </div>
+                      <div className="flex items-center space-x-2">
+                        <div className="flex items-center text-xs text-gray-500">
+                          <Clock className="h-3 w-3 mr-1" />
+                          {formatDate(chat.created_at)}
+                        </div>
+                        <Button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            deleteChat(chat.id)
+                          }}
+                          variant="ghost"
+                          size="sm"
+                          className="opacity-0 group-hover:opacity-100 transition-opacity h-6 w-6 p-0"
+                        >
+                          <Trash2 className="h-3 w-3 text-red-500" />
+                        </Button>
+                      </div>
                     </div>
 
-                    {isLoading ? (
-                      <div className="flex items-center space-x-2">
-                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-                        <span className="text-sm text-blue-600">Generating content...</span>
-                      </div>
-                    ) : (
-                      <div className="text-[#06040a] whitespace-pre-wrap text-sm">
-                        {animatedText}
-                        {animatedText.length < currentResponse.length && <span className="animate-pulse">|</span>}
-                      </div>
-                    )}
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium text-gray-900 line-clamp-2">{chat.message}</div>
+                      <div className="text-sm text-gray-600 line-clamp-3">{chat.response}</div>
+                    </div>
                   </div>
-                </div>
-              )}
-            </>
+                )
+              })}
+            </div>
           )}
-        </div>
+        </ScrollArea>
 
         {/* Footer */}
-        <div className="p-4 border-t border-gray-200">
-          {prompt && (
-            <Button
-              onClick={handleRegenerate}
-              disabled={isLoading}
-              className="w-full bg-[#06040a] hover:bg-[#06040a]/90 text-white"
-            >
-              {isLoading ? (
-                <>
-                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                  Generating...
-                </>
-              ) : (
-                <>
-                  <RefreshCw className="h-4 w-4 mr-2" />
-                  Generate New Response
-                </>
-              )}
+        <div className="p-6 border-t">
+          <div className="flex items-center justify-between text-sm text-gray-500">
+            <span>{filteredChats.length} conversations</span>
+            <Button onClick={fetchChats} variant="ghost" size="sm" className="text-xs">
+              Refresh
             </Button>
-          )}
+          </div>
         </div>
-      </div>
-    </div>
+      </SheetContent>
+    </Sheet>
   )
 }
