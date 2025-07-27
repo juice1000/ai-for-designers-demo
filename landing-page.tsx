@@ -52,9 +52,7 @@ export default function Component() {
         >
           {/* Main Heading */}
           <h1 className="text-5xl md:text-6xl lg:text-7xl font-bold text-[#06040a] leading-tight">
-            Walk through the
-            <br />
-            world with us
+           Story Forge
           </h1>
 
           {/* Description Text */}
