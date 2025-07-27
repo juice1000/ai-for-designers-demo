@@ -37,14 +37,21 @@ export function ChatSidebar({ isOpen, onClose, prompt, onRegenerate }: ChatSideb
         },
       })
 
+      const data = await res.json()
+
       if (!res.ok) {
-        throw new Error("Failed to fetch chat history")
+        console.error("API response error:", data.error)
+        // Still try to use any chats that might be returned
+        setChatHistory(data.chats || [])
+        return
       }
 
-      const data = await res.json()
+      console.log("Chat history fetched successfully:", data.chats?.length || 0, "messages")
       setChatHistory(data.chats || [])
     } catch (error) {
       console.error("Error fetching chat history:", error)
+      // Set empty array on error so UI doesn't break
+      setChatHistory([])
     } finally {
       setIsLoadingHistory(false)
     }
@@ -146,6 +153,10 @@ export function ChatSidebar({ isOpen, onClose, prompt, onRegenerate }: ChatSideb
               <MessageSquare className="h-12 w-12 text-gray-300 mx-auto mb-4" />
               <p className="text-gray-500">No chat history yet</p>
               <p className="text-sm text-gray-400 mt-1">Start a conversation to see your messages here</p>
+              <Button onClick={fetchChatHistory} variant="outline" size="sm" className="mt-4 bg-transparent">
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Refresh
+              </Button>
             </div>
           ) : (
             <>

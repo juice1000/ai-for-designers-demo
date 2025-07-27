@@ -3,8 +3,9 @@
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ChatSidebar } from "@/components/chat-sidebar"
+import { VoiceAssistant } from "@/components/voice-assistant"
 import { useState } from "react"
-import { MessageSquare } from "lucide-react" // Import the icon
+import { MessageSquare } from "lucide-react"
 
 export default function Component() {
   const [showPrompt, setShowPrompt] = useState(false)
@@ -16,24 +17,21 @@ export default function Component() {
     setIsAnimating(true)
     setTimeout(() => {
       setShowPrompt(true)
-    }, 500) // Wait for fade out animation to complete
+    }, 500)
   }
 
   const handleGenerateContent = () => {
     if (prompt.trim()) {
       setIsChatOpen(true)
-      // The sidebar will now handle the generation when the regenerate button is clicked
     }
   }
 
   const handleRegenerate = () => {
     // This will trigger a new generation in the ChatSidebar
-    // The sidebar will handle generating new content when this is called
   }
 
   const handleOpenChatFromButton = () => {
     setIsChatOpen(true)
-    // Just open the chat to show history - no automatic generation
   }
 
   return (
@@ -51,9 +49,7 @@ export default function Component() {
           } ${showPrompt ? "hidden" : "block"}`}
         >
           {/* Main Heading */}
-          <h1 className="text-5xl md:text-6xl lg:text-7xl font-bold text-[#06040a] leading-tight">
-           Story Forge
-          </h1>
+          <h1 className="text-5xl md:text-6xl lg:text-7xl font-bold text-[#06040a] leading-tight">Story Forge</h1>
 
           {/* Description Text */}
           <p className="text-lg md:text-xl text-[#06040a] max-w-2xl mx-auto leading-relaxed">
@@ -124,7 +120,14 @@ export default function Component() {
           </div>
         </div>
 
-        {/* Floating Chat Button */}
+        {/* Voice Assistant - Left Bottom */}
+        {showPrompt && (
+          <div className="fixed bottom-6 left-6 z-50">
+            <VoiceAssistant />
+          </div>
+        )}
+
+        {/* Floating Chat Button - Right Bottom */}
         {!isChatOpen && (
           <Button
             onClick={handleOpenChatFromButton}
