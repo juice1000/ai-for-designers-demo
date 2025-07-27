@@ -1,38 +1,40 @@
-"use client"
+'use client';
 
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { ChatSidebar } from "@/components/chat-sidebar"
-import { VoiceAssistant } from "@/components/voice-assistant"
-import { useState } from "react"
-import { MessageSquare } from "lucide-react"
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { ChatSidebar } from '@/components/chat-sidebar';
+import { VoiceAssistant } from '@/components/voice-assistant';
+import { ChatInput } from '@/components/chat-input';
+import { useState } from 'react';
+import { MessageSquare } from 'lucide-react';
 
 export default function Component() {
-  const [showPrompt, setShowPrompt] = useState(false)
-  const [isAnimating, setIsAnimating] = useState(false)
-  const [prompt, setPrompt] = useState("")
-  const [isChatOpen, setIsChatOpen] = useState(false)
+  const [showPrompt, setShowPrompt] = useState(false);
+  const [isAnimating, setIsAnimating] = useState(false);
+  const [prompt, setPrompt] = useState('');
+  const [isChatOpen, setIsChatOpen] = useState(false);
 
   const handleGetStarted = () => {
-    setIsAnimating(true)
+    setIsAnimating(true);
     setTimeout(() => {
-      setShowPrompt(true)
-    }, 500)
-  }
+      setShowPrompt(true);
+    }, 500);
+  };
 
-  const handleGenerateContent = () => {
-    if (prompt.trim()) {
-      setIsChatOpen(true)
+  const handleGenerateContent = async (message: string, images?: File[]) => {
+    if (message.trim() || (images && images.length > 0)) {
+      setPrompt(message); // Set the prompt for the chat sidebar
+      setIsChatOpen(true);
     }
-  }
+  };
 
   const handleRegenerate = () => {
     // This will trigger a new generation in the ChatSidebar
-  }
+  };
 
   const handleOpenChatFromButton = () => {
-    setIsChatOpen(true)
-  }
+    setIsChatOpen(true);
+  };
 
   return (
     <>
@@ -45,8 +47,8 @@ export default function Component() {
         {/* Landing Content */}
         <div
           className={`max-w-4xl mx-auto text-center space-y-8 transition-all duration-500 ease-in-out ${
-            isAnimating ? "opacity-0 transform -translate-y-12" : "opacity-100 transform translate-y-0"
-          } ${showPrompt ? "hidden" : "block"}`}
+            isAnimating ? 'opacity-0 transform -translate-y-12' : 'opacity-100 transform translate-y-0'
+          } ${showPrompt ? 'hidden' : 'block'}`}
         >
           {/* Main Heading */}
           <h1 className="text-5xl md:text-6xl lg:text-7xl font-bold text-[#06040a] leading-tight">Story Forge</h1>
@@ -75,43 +77,23 @@ export default function Component() {
         {/* Prompt Input View */}
         <div
           className={`max-w-2xl mx-auto text-center space-y-6 transition-all duration-500 ease-in-out ${
-            showPrompt ? "opacity-100 transform translate-y-0" : "opacity-0 transform translate-y-12"
-          } ${!showPrompt ? "hidden" : "block"}`}
+            showPrompt ? 'opacity-100 transform translate-y-0' : 'opacity-0 transform translate-y-12'
+          } ${!showPrompt ? 'hidden' : 'block'}`}
         >
           <div className="bg-white/90 backdrop-blur-sm rounded-2xl p-8 shadow-lg">
             <h2 className="text-3xl md:text-4xl font-bold text-[#06040a] mb-4">What's your content idea?</h2>
-            <p className="text-lg text-[#06040a]/80 mb-6">
-              Tell us about your social media post idea and we'll help bring it to life
-            </p>
+            <p className="text-lg text-[#06040a]/80 mb-6">Tell us about your social media post idea and we'll help bring it to life</p>
 
             <div className="space-y-4">
-              <Input
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                placeholder="e.g., A motivational quote about perseverance with mountain imagery..."
-                className="w-full p-4 text-lg border-2 border-gray-200 rounded-xl focus:border-[#06040a] focus:ring-0"
-                onKeyPress={(e) => {
-                  if (e.key === "Enter") {
-                    handleGenerateContent()
-                  }
-                }}
-              />
-              <Button
-                onClick={handleGenerateContent}
-                disabled={!prompt.trim()}
-                className="w-full bg-[#06040a] hover:bg-[#06040a]/90 text-[#ffffff] py-4 text-lg rounded-xl disabled:opacity-50 disabled:cursor-not-allowed"
-                size="lg"
-              >
-                Generate Content
-              </Button>
+              <ChatInput onSendMessage={handleGenerateContent} placeholder="e.g., A motivational quote about perseverance with mountain imagery..." />
             </div>
 
             <button
               onClick={() => {
-                setShowPrompt(false)
-                setIsAnimating(false)
-                setPrompt("")
-                setIsChatOpen(false)
+                setShowPrompt(false);
+                setIsAnimating(false);
+                setPrompt('');
+                setIsChatOpen(false);
               }}
               className="mt-4 text-[#06040a]/60 hover:text-[#06040a] transition-colors duration-200"
             >
@@ -141,20 +123,10 @@ export default function Component() {
       </div>
 
       {/* Chat Sidebar */}
-      <ChatSidebar
-        isOpen={isChatOpen}
-        onClose={() => setIsChatOpen(false)}
-        prompt={prompt}
-        onRegenerate={handleRegenerate}
-      />
+      <ChatSidebar isOpen={isChatOpen} onClose={() => setIsChatOpen(false)} prompt={prompt} onRegenerate={handleRegenerate} />
 
       {/* Overlay when chat is open */}
-      {isChatOpen && (
-        <div
-          className="fixed inset-0 bg-black/20 z-40 transition-opacity duration-300"
-          onClick={() => setIsChatOpen(false)}
-        />
-      )}
+      {isChatOpen && <div className="fixed inset-0 bg-black/20 z-40 transition-opacity duration-300" onClick={() => setIsChatOpen(false)} />}
     </>
-  )
+  );
 }

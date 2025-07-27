@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 
 export async function POST(request: NextRequest) {
   try {
-    const { message: userMessage } = await request.json();
+    const { message: userMessage, images } = await request.json();
 
     const supabaseUrl = process.env.SUPABASE_URL;
     const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -16,19 +16,42 @@ export async function POST(request: NextRequest) {
     // Initialize Supabase client for server-side operations
     const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
 
-    // Call OpenAI API with function calling
-    const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'gpt-4-0125-preview',
-        messages: [
-          {
-            role: 'system',
-            content: `You are a creative social media content generator and post idea assistant. Help users create engaging social media posts with compelling copy, hashtags, and creative ideas. 
+    // Fetch the last 3 conversations for context
+    const { data: recentChats, error: chatsError } = await supabase
+      .from('chats')
+      .select('request, response, created_at')
+      .order('created_at', { ascending: false })
+      .limit(3);
+
+    if (chatsError) {
+      console.error('Error fetching recent chats:', chatsError);
+    }
+
+    // Prepare user message content
+    let userContent: any = userMessage;
+
+    // If images are provided, create a structured message with both text and images
+    if (images && images.length > 0) {
+      userContent = [
+        {
+          type: 'text',
+          text: userMessage || 'Please analyze these images and help me create social media content based on them.',
+        },
+        ...images.map((imageUrl: string) => ({
+          type: 'image_url',
+          image_url: {
+            url: imageUrl,
+            detail: 'high',
+          },
+        })),
+      ];
+    }
+
+    // Build conversation history for context
+    const conversationMessages: any[] = [
+      {
+        role: 'system',
+        content: `You are a creative social media content generator and post idea assistant. Help users create engaging social media posts with compelling copy, hashtags, and creative ideas. 
 
 IMPORTANT: When you generate ANY post content, captions, or social media copy, you MUST call the create_post function to save it automatically.
 
@@ -38,20 +61,63 @@ You should call create_post when:
 - You generate specific social media content
 - You write ready-to-use post text
 - The user asks for "a post about..." or similar requests
+- You analyze images and create posts based on them
 
 You should NOT call create_post for:
 - General advice or tips without specific post content
 - Explanations about social media strategy
 - Questions back to the user
 
-Always provide your creative response AND call the function when you create actual post content. The user expects post content to be automatically saved to their collection.`,
-          },
+When users upload images, analyze them carefully and create compelling social media content that incorporates the visual elements, mood, colors, subjects, and overall vibe of the images.
+
+Always provide your creative response AND call the function when you create actual post content. The user expects post content to be automatically saved to their collection.
+
+You have access to the conversation history to maintain context and provide coherent responses.`,
+      },
+    ];
+
+    // Add recent conversation history for context (in chronological order, oldest first)
+    if (recentChats && recentChats.length > 0) {
+      // Reverse to get chronological order (oldest first)
+      const chronologicalChats = recentChats.reverse();
+
+      for (const chat of chronologicalChats) {
+        conversationMessages.push(
           {
             role: 'user',
-            content: userMessage,
+            content: chat.request,
           },
-        ],
-        max_tokens: 1000,
+          {
+            role: 'assistant',
+            content: chat.response,
+          }
+        );
+      }
+    }
+
+    // Add the current user message
+    conversationMessages.push({
+      role: 'user',
+      content: userContent,
+    });
+
+    // Log conversation context for debugging
+    console.log(`Building conversation with ${conversationMessages.length} messages (including system prompt)`);
+    if (recentChats && recentChats.length > 0) {
+      console.log(`Including ${recentChats.length} previous conversation(s) for context`);
+    }
+
+    // Call OpenAI API with function calling
+    const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o', // Use vision model when images are present
+        messages: conversationMessages,
+        max_tokens: 1500, // Increased to handle longer context
         temperature: 0.7,
         tools: [
           {

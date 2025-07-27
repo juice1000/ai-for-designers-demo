@@ -5,6 +5,8 @@ import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { X, Copy, RefreshCw, MessageSquare, Mic, FileText, ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { PostImageManager } from '@/components/post-image-manager';
+import { ChatInput } from '@/components/chat-input';
 
 interface ChatMessage {
   id: string;
@@ -172,6 +174,64 @@ export function ChatSidebar({ isOpen, onClose, prompt, onRegenerate }: ChatSideb
     } catch (error) {
       console.error('Error:', error);
       setCurrentResponse('Sorry, there was an error generating your content. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Handle new message with optional images
+  const handleNewMessage = async (message: string, images?: File[]) => {
+    if (!message.trim() && (!images || images.length === 0)) return;
+
+    setIsLoading(true);
+    setCurrentResponse('');
+    setAnimatedText('');
+
+    try {
+      // If images are provided, upload them first
+      let imageUrls: string[] = [];
+      if (images && images.length > 0) {
+        for (const image of images) {
+          const formData = new FormData();
+          formData.append('file', image);
+          formData.append('postId', `temp-${Date.now()}`); // Temporary post ID
+
+          const uploadRes = await fetch('/api/upload-image', {
+            method: 'POST',
+            body: formData,
+          });
+
+          if (uploadRes.ok) {
+            const uploadData = await uploadRes.json();
+            imageUrls.push(uploadData.imageUrl);
+          }
+        }
+      }
+
+      // Send message to chat API
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          message: message,
+          images: imageUrls,
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error('Failed to send message');
+      }
+
+      const data = await res.json();
+      setCurrentResponse(data.message);
+
+      // Refresh all histories to include the new message and any posts created
+      await Promise.all([fetchChatHistory(), fetchPostsHistory()]);
+    } catch (error) {
+      console.error('Error:', error);
+      setCurrentResponse('Sorry, there was an error sending your message. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -431,6 +491,14 @@ export function ChatSidebar({ isOpen, onClose, prompt, onRegenerate }: ChatSideb
                         </div>
                       </div>
                       <div className="flex gap-1">
+                        <PostImageManager
+                          postId={post.id}
+                          currentImageUrl={post.metadata?.image_url}
+                          onImageUpdated={(imageUrl) => {
+                            // Refresh posts history to show updated image
+                            fetchPostsHistory();
+                          }}
+                        />
                         <Button variant="ghost" size="sm" onClick={() => copyToClipboard(post.content)} className="h-7 px-2">
                           <Copy className="h-3 w-3" />
                         </Button>
@@ -447,6 +515,21 @@ export function ChatSidebar({ isOpen, onClose, prompt, onRegenerate }: ChatSideb
                     {/* Post Content */}
                     <div className="bg-orange-50 rounded-lg p-3">
                       <p className="text-[#06040a] text-sm whitespace-pre-wrap">{post.content}</p>
+
+                      {/* Display post image if available */}
+                      {post.metadata?.image_url && (
+                        <div className="mt-3">
+                          <img
+                            src={post.metadata.image_url}
+                            alt={post.title}
+                            className="w-full max-h-48 object-cover rounded-lg border"
+                            onError={(e) => {
+                              const target = e.target as HTMLImageElement;
+                              target.style.display = 'none';
+                            }}
+                          />
+                        </div>
+                      )}
                     </div>
 
                     {/* Post Tags */}
@@ -474,7 +557,8 @@ export function ChatSidebar({ isOpen, onClose, prompt, onRegenerate }: ChatSideb
         </Tabs>
 
         {/* Footer */}
-        <div className="p-4 border-t border-gray-200 flex-shrink-0">
+        <div className="p-4 border-t border-gray-200 flex-shrink-0 space-y-3">
+          {/* Show regenerate button for initial prompt */}
           {prompt && (
             <Button onClick={handleRegenerate} disabled={isLoading} className="w-full bg-[#06040a] hover:bg-[#06040a]/90 text-white">
               {isLoading ? (
@@ -490,6 +574,9 @@ export function ChatSidebar({ isOpen, onClose, prompt, onRegenerate }: ChatSideb
               )}
             </Button>
           )}
+
+          {/* Chat Input */}
+          <ChatInput onSendMessage={handleNewMessage} isLoading={isLoading} placeholder="Ask me to create content, posts, or analyze images..." />
         </div>
       </div>
     </div>

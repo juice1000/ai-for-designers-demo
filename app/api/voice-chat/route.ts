@@ -87,6 +87,49 @@ export async function POST(request: NextRequest) {
 
     console.log('Transcribed text:', userText);
 
+    // Fetch the last 3 conversations for context (from both chat and voice)
+    let recentContext: Array<{ request: string; response: string }> = [];
+
+    if (supabase) {
+      try {
+        // Get recent chat messages
+        const { data: recentChats } = await supabase.from('chats').select('request, response, created_at').order('created_at', { ascending: false }).limit(2);
+
+        // Get recent voice interactions
+        const { data: recentVoice } = await supabase
+          .from('voice')
+          .select('user_audio_transcript, ai_response, created_at')
+          .order('created_at', { ascending: false })
+          .limit(2);
+
+        // Combine and sort by timestamp, then take the most recent 3
+        const allInteractions = [
+          ...(recentChats || []).map((chat) => ({
+            request: chat.request as string,
+            response: chat.response as string,
+            created_at: chat.created_at as string,
+          })),
+          ...(recentVoice || []).map((voice) => ({
+            request: voice.user_audio_transcript as string,
+            response: voice.ai_response as string,
+            created_at: voice.created_at as string,
+          })),
+        ]
+          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+          .slice(0, 3)
+          .reverse(); // Reverse to get chronological order
+
+        recentContext = allInteractions.map((interaction) => ({
+          request: interaction.request,
+          response: interaction.response,
+        }));
+
+        console.log(`Including ${recentContext.length} previous interaction(s) for voice context`);
+      } catch (error) {
+        console.error('Error fetching conversation context:', error);
+      }
+    }
+
     // Generate AI response using OpenAI with function calling
     const systemPrompt = `You are a creative content strategist and brainstorming assistant specializing in social media and brand content creation. Your role is to help users generate engaging, authentic, and effective content ideas.
 
@@ -109,7 +152,35 @@ Guidelines for when to call create_post:
 
 Keep voice responses concise (30-60 seconds when spoken) but use the function when you create specific post content.
 
-Always aim to spark creativity and provide practical, implementable ideas that align with current social media trends and best practices.`;
+Always aim to spark creativity and provide practical, implementable ideas that align with current social media trends and best practices. You have access to conversation history to maintain context and provide coherent responses.`;
+
+    // Build conversation messages with context
+    const conversationMessages: any[] = [
+      {
+        role: 'system',
+        content: systemPrompt,
+      },
+    ];
+
+    // Add recent conversation context
+    for (const context of recentContext) {
+      conversationMessages.push(
+        {
+          role: 'user',
+          content: context.request,
+        },
+        {
+          role: 'assistant',
+          content: context.response,
+        }
+      );
+    }
+
+    // Add current user message
+    conversationMessages.push({
+      role: 'user',
+      content: userText,
+    });
 
     const chatResponse = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -119,17 +190,8 @@ Always aim to spark creativity and provide practical, implementable ideas that a
       },
       body: JSON.stringify({
         model: 'gpt-4-0125-preview',
-        messages: [
-          {
-            role: 'system',
-            content: systemPrompt,
-          },
-          {
-            role: 'user',
-            content: userText,
-          },
-        ],
-        max_tokens: 400,
+        messages: conversationMessages,
+        max_tokens: 500, // Increased to handle context
         temperature: 0.8,
         tools: [
           {
