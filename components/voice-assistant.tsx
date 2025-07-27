@@ -7,10 +7,9 @@ import { cn } from "@/lib/utils"
 
 interface VoiceAssistantProps {
   className?: string
-  onConversationUpdate?: (userMessage: string, agentResponse: string) => void
 }
 
-export function VoiceAssistant({ className, onConversationUpdate }: VoiceAssistantProps) {
+export function VoiceAssistant({ className }: VoiceAssistantProps) {
   const [isRecording, setIsRecording] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -21,20 +20,12 @@ export function VoiceAssistant({ className, onConversationUpdate }: VoiceAssista
   // Agent-specific states
   const [agentStatus, setAgentStatus] = useState<"disconnected" | "connecting" | "connected">("disconnected")
   const [agentMode, setAgentMode] = useState<"listening" | "speaking">("listening")
-  const [conversationId, setConversationId] = useState<string | null>(null)
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
   const audioRef = useRef<HTMLAudioElement | null>(null)
-  const websocketRef = useRef<WebSocket | null>(null)
-  const mediaStreamRef = useRef<MediaStream | null>(null)
-  const audioContextRef = useRef<AudioContext | null>(null)
-  const processorRef = useRef<ScriptProcessorNode | null>(null)
-
-  // Current conversation state for real-time updates
-  const currentUserMessageRef = useRef<string>("")
-  const currentAgentResponseRef = useRef<string>("")
-
+  const conversationRef = useRef<any>(null)
+  console.log("hi
   // Initialize audio element
   useEffect(() => {
     audioRef.current = new Audio()
@@ -46,291 +37,74 @@ export function VoiceAssistant({ className, onConversationUpdate }: VoiceAssista
         audioRef.current.pause()
         audioRef.current = null
       }
-      // Clean up WebSocket and audio resources
-      if (websocketRef.current) {
-        websocketRef.current.close()
-      }
-      if (mediaStreamRef.current) {
-        mediaStreamRef.current.getTracks().forEach((track) => track.stop())
-      }
-      if (audioContextRef.current) {
-        audioContextRef.current.close()
+      // Clean up conversation on unmount
+      if (conversationRef.current) {
+        conversationRef.current.endSession?.()
       }
     }
   }, [])
 
-  // Save conversation exchange to chat history
-  const saveConversationExchange = useCallback(
-    async (userMessage: string, agentResponse: string) => {
-      try {
-        console.log("💾 Saving conversation exchange:", { userMessage, agentResponse })
-
-        // Call the callback if provided (for real-time UI updates)
-        onConversationUpdate?.(userMessage, agentResponse)
-
-        // Save to database via API
-        const response = await fetch("/api/chat", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            message: userMessage,
-            response: agentResponse,
-            source: "voice_conversation",
-            conversation_id: conversationId,
-          }),
-        })
-
-        if (!response.ok) {
-          console.error("❌ Failed to save conversation to database")
-        } else {
-          console.log("✅ Conversation exchange saved successfully")
-        }
-      } catch (error) {
-        console.error("❌ Error saving conversation exchange:", error)
-      }
-    },
-    [conversationId, onConversationUpdate],
-  )
-
-  // Convert Float32Array to 16-bit PCM
-  const float32To16BitPCM = (float32Array: Float32Array): ArrayBuffer => {
-    const buffer = new ArrayBuffer(float32Array.length * 2)
-    const view = new DataView(buffer)
-    let offset = 0
-    for (let i = 0; i < float32Array.length; i++, offset += 2) {
-      const s = Math.max(-1, Math.min(1, float32Array[i]))
-      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true)
-    }
-    return buffer
-  }
-
-  // Start conversational agent using WebSocket
+  // Start conversational agent using ElevenLabs SDK
   const startConversationAgent = useCallback(async () => {
     try {
       setError(null)
       setAgentStatus("connecting")
       setProcessingStep("Connecting to conversational agent...")
 
-      const apiKey = process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY
-      if (!apiKey) {
-        throw new Error("ElevenLabs API key not configured")
-      }
+      // Request microphone permission
+      await navigator.mediaDevices.getUserMedia({ audio: true })
 
-      // Request microphone permission and get audio stream
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          sampleRate: 16000,
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
+      // Dynamically import the ElevenLabs client
+      const { Conversation } = await import("@elevenlabs/client")
+
+      // Start the conversation using the official SDK
+      conversationRef.current = await Conversation.startSession({
+        agentId: "agent_1101k161d5y2fp1ssvejv791505r",
+        onConnect: () => {
+          console.log("Connected to ElevenLabs agent")
+          setAgentStatus("connected")
+          setError("✅ Connected to conversational agent!")
+          setProcessingStep("")
+        },
+        onDisconnect: () => {
+          console.log("Disconnected from ElevenLabs agent")
+          setAgentStatus("disconnected")
+          setAgentMode("listening")
+          setError("Disconnected from conversational agent")
+          setProcessingStep("")
+          conversationRef.current = null
+        },
+        onError: (error: any) => {
+          console.error("ElevenLabs conversation error:", error)
+          setError(`❌ Agent Error: ${error.message || error}`)
+          setAgentStatus("disconnected")
+          setProcessingStep("")
+        },
+        onModeChange: (mode: any) => {
+          console.log("Agent mode changed:", mode)
+          setAgentMode(mode.mode === "speaking" ? "speaking" : "listening")
         },
       })
-      mediaStreamRef.current = stream
-
-      // Set up audio context for processing
-      audioContextRef.current = new AudioContext({ sampleRate: 16000 })
-      const source = audioContextRef.current.createMediaStreamSource(stream)
-
-      // Create script processor for audio data
-      processorRef.current = audioContextRef.current.createScriptProcessor(4096, 1, 1)
-
-      const agentId = "agent_1101k161d5y2fp1ssvejv791505r"
-
-      // Connect to ElevenLabs WebSocket
-      const wsUrl = `wss://api.elevenlabs.io/v1/convai/agents/${agentId}/conversation/ws`
-      websocketRef.current = new WebSocket(wsUrl)
-
-      websocketRef.current.onopen = () => {
-        console.log("✅ WebSocket connected to ElevenLabs agent")
-
-        // Send authentication message
-        if (websocketRef.current) {
-          websocketRef.current.send(
-            JSON.stringify({
-              type: "auth",
-              xi_api_key: apiKey,
-            }),
-          )
-        }
-      }
-
-      websocketRef.current.onmessage = async (event) => {
-        try {
-          if (event.data instanceof Blob) {
-            // Audio data received
-            console.log("🔊 Received audio data from agent")
-            setAgentMode("speaking")
-
-            // Play the audio
-            const audioUrl = URL.createObjectURL(event.data)
-            if (audioRef.current) {
-              audioRef.current.src = audioUrl
-              await audioRef.current.play()
-              setIsPlaying(true)
-            }
-
-            // Clean up URL after playing
-            audioRef.current!.onended = () => {
-              setIsPlaying(false)
-              setAgentMode("listening")
-              URL.revokeObjectURL(audioUrl)
-            }
-          } else {
-            // Text message received
-            const data = JSON.parse(event.data)
-            console.log("📨 WebSocket message received:", data)
-
-            switch (data.type) {
-              case "auth_success":
-                console.log("✅ Authentication successful")
-                setAgentStatus("connected")
-                setError("✅ Connected to conversational agent!")
-                setProcessingStep("")
-
-                // Start audio processing
-                if (processorRef.current && audioContextRef.current) {
-                  processorRef.current.onaudioprocess = (e) => {
-                    if (websocketRef.current?.readyState === WebSocket.OPEN && agentMode === "listening") {
-                      const inputBuffer = e.inputBuffer.getChannelData(0)
-                      const pcmData = float32To16BitPCM(inputBuffer)
-                      websocketRef.current.send(pcmData)
-                    }
-                  }
-
-                  source.connect(processorRef.current)
-                  processorRef.current.connect(audioContextRef.current.destination)
-                }
-                break
-
-              case "conversation_initiation_metadata":
-                setConversationId(data.conversation_id)
-                console.log("🆔 Conversation initiated:", data.conversation_id)
-                break
-
-              case "user_transcript":
-                if (data.user_transcript) {
-                  currentUserMessageRef.current = data.user_transcript
-                  console.log("👤 User said:", data.user_transcript)
-                }
-                break
-
-              case "agent_response":
-                if (data.agent_response) {
-                  currentAgentResponseRef.current = data.agent_response
-                  console.log("🤖 Agent responded:", data.agent_response)
-                }
-                break
-
-              case "agent_response_correction":
-                if (data.agent_response) {
-                  currentAgentResponseRef.current = data.agent_response
-                  console.log("🔄 Agent corrected response:", data.agent_response)
-                }
-                break
-
-              case "conversation_end":
-                console.log("🔚 Conversation ended")
-                if (currentUserMessageRef.current && currentAgentResponseRef.current) {
-                  saveConversationExchange(currentUserMessageRef.current, currentAgentResponseRef.current)
-                }
-                break
-
-              case "error":
-                console.error("❌ WebSocket error from server:", data.message)
-                setError(`❌ Agent Error: ${data.message}`)
-                break
-
-              default:
-                console.log("❓ Unknown WebSocket event type:", data.type, data)
-            }
-
-            // Save conversation exchange if we have both messages
-            if (currentUserMessageRef.current && currentAgentResponseRef.current) {
-              saveConversationExchange(currentUserMessageRef.current, currentAgentResponseRef.current)
-              currentUserMessageRef.current = ""
-              currentAgentResponseRef.current = ""
-            }
-          }
-        } catch (error) {
-          console.error("❌ Error processing WebSocket message:", error)
-        }
-      }
-
-      websocketRef.current.onerror = (error) => {
-        console.error("❌ WebSocket error:", error)
-        setError("❌ WebSocket connection failed")
-        setAgentStatus("disconnected")
-        setProcessingStep("")
-      }
-
-      websocketRef.current.onclose = (event) => {
-        console.log("🔌 WebSocket closed:", event.code, event.reason)
-        setAgentStatus("disconnected")
-        setAgentMode("listening")
-        setError("Disconnected from conversational agent")
-        setProcessingStep("")
-        setConversationId(null)
-
-        // Clean up audio resources
-        if (mediaStreamRef.current) {
-          mediaStreamRef.current.getTracks().forEach((track) => track.stop())
-          mediaStreamRef.current = null
-        }
-        if (processorRef.current) {
-          processorRef.current.disconnect()
-          processorRef.current = null
-        }
-        if (audioContextRef.current) {
-          audioContextRef.current.close()
-          audioContextRef.current = null
-        }
-
-        websocketRef.current = null
-      }
     } catch (error) {
-      console.error("❌ Failed to start conversation:", error)
+      console.error("Failed to start conversation:", error)
       setError(`❌ Failed to start agent: ${error instanceof Error ? error.message : "Unknown error"}`)
       setAgentStatus("disconnected")
       setProcessingStep("")
     }
-  }, [conversationId, onConversationUpdate, saveConversationExchange, agentMode])
+  }, [])
 
   // Stop conversational agent
   const stopConversationAgent = useCallback(async () => {
     try {
-      if (websocketRef.current) {
-        websocketRef.current.close(1000, "User disconnected")
-        websocketRef.current = null
+      if (conversationRef.current) {
+        await conversationRef.current.endSession()
+        conversationRef.current = null
       }
-
-      if (mediaStreamRef.current) {
-        mediaStreamRef.current.getTracks().forEach((track) => track.stop())
-        mediaStreamRef.current = null
-      }
-
-      if (processorRef.current) {
-        processorRef.current.disconnect()
-        processorRef.current = null
-      }
-
-      if (audioContextRef.current) {
-        audioContextRef.current.close()
-        audioContextRef.current = null
-      }
-
       setAgentStatus("disconnected")
       setAgentMode("listening")
       setProcessingStep("")
-      setConversationId(null)
-
-      // Clear any pending messages
-      currentUserMessageRef.current = ""
-      currentAgentResponseRef.current = ""
     } catch (error) {
-      console.error("❌ Failed to stop conversation:", error)
+      console.error("Failed to stop conversation:", error)
       setError(`❌ Failed to stop agent: ${error instanceof Error ? error.message : "Unknown error"}`)
     }
   }, [])
@@ -566,20 +340,6 @@ export function VoiceAssistant({ className, onConversationUpdate }: VoiceAssista
         </Button>
       </div>
 
-      {/* Connection Status */}
-      {agentStatus === "connected" && conversationId && (
-        <div className="text-xs text-gray-500 bg-white/80 rounded px-2 py-1">
-          🔗 Session: {conversationId.slice(0, 8)}...
-        </div>
-      )}
-
-      {/* WebSocket Status */}
-      {websocketRef.current && (
-        <div className="text-xs text-green-600 bg-green-50 rounded px-2 py-1">
-          📡 WebSocket: {websocketRef.current.readyState === WebSocket.OPEN ? "Connected" : "Connecting"}
-        </div>
-      )}
-
       {/* Test Buttons - Development only */}
       {process.env.NODE_ENV === "development" && (
         <div className="flex flex-wrap gap-2 justify-center">
@@ -647,18 +407,6 @@ export function VoiceAssistant({ className, onConversationUpdate }: VoiceAssista
           >
             Test Multi
           </Button>
-          <Button
-            onClick={() => {
-              const apiKey = process.env.NEXT_ENV_ELEVENLABS_API_KEY
-              console.log("API Key check:", apiKey ? "✅ Present" : "❌ Missing")
-              setError(apiKey ? "✅ API Key found" : "❌ API Key missing")
-            }}
-            variant="outline"
-            size="sm"
-            className="text-xs"
-          >
-            Check API Key
-          </Button>
         </div>
       )}
 
@@ -723,17 +471,10 @@ export function VoiceAssistant({ className, onConversationUpdate }: VoiceAssista
         <div
           className={cn(
             "border rounded-lg p-3 max-w-xs",
-            error.startsWith("✅") || error.startsWith("🔗")
-              ? "bg-green-50 border-green-200"
-              : "bg-red-50 border-red-200",
+            error.startsWith("✅") ? "bg-green-50 border-green-200" : "bg-red-50 border-red-200",
           )}
         >
-          <p
-            className={cn(
-              "text-sm text-center",
-              error.startsWith("✅") || error.startsWith("🔗") ? "text-green-600" : "text-red-600",
-            )}
-          >
+          <p className={cn("text-sm text-center", error.startsWith("✅") ? "text-green-600" : "text-red-600")}>
             {error}
           </p>
           <Button
@@ -742,9 +483,7 @@ export function VoiceAssistant({ className, onConversationUpdate }: VoiceAssista
             size="sm"
             className={cn(
               "w-full mt-2",
-              error.startsWith("✅") || error.startsWith("🔗")
-                ? "text-green-600 hover:text-green-700"
-                : "text-red-600 hover:text-red-700",
+              error.startsWith("✅") ? "text-green-600 hover:text-green-700" : "text-red-600 hover:text-red-700",
             )}
           >
             Dismiss
@@ -764,7 +503,7 @@ export function VoiceAssistant({ className, onConversationUpdate }: VoiceAssista
               🎤 Voice brainstorming assistant
               <br />
               {useConversationalAgent
-                ? "Using ElevenLabs WebSocket for real-time conversation"
+                ? "Using ElevenLabs conversational agent for natural real-time dialogue"
                 : "Using multi-step processing for better accuracy"}
               <br />
               Ask me for content ideas, trends, or creative inspiration!
